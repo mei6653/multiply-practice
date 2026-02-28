@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>2桁かけ算練習（10問）</title>
+  <title>2桁かけ算練習（10問・タイム付き）</title>
   <style>
     body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px; }
-    .card { max-width: 720px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 16px; }
+    .card { max-width: 860px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 16px; }
     h1 { font-size: 22px; margin: 0 0 12px; }
     .q { font-size: 36px; font-weight: 700; margin: 14px 0; letter-spacing: 1px; }
     .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
@@ -19,23 +19,28 @@
     .stat { margin-top: 10px; color: #444; }
     .small { color: #666; font-size: 14px; margin-top: 12px; }
     .pill { display: inline-block; padding: 3px 10px; border: 1px solid #ccc; border-radius: 999px; margin-left: 6px; }
-
     .settings { margin-top: 14px; padding-top: 12px; border-top: 1px solid #eee; }
-
     .hidden { display: none; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; }
     th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
     th { background: #f6f6f6; }
     .left { text-align: left; }
+    .split { margin-top: 16px; padding-top: 14px; border-top: 1px solid #eee; }
+    .mono { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>2桁のかけ算練習（10問）</h1>
+    <h1>2桁のかけ算練習（10問・タイム付き）</h1>
 
     <!-- 問題画面 -->
     <div id="quizView">
-      <div class="stat" id="progress">1 / 10</div>
+      <div class="row stat">
+        <div id="progress">1 / 10</div>
+        <div class="pill mono">この問題：<span id="qTime">0.0</span>s</div>
+        <div class="pill mono">合計：<span id="setTime">0.0</span>s</div>
+      </div>
+
       <div class="q" id="question">-- × --</div>
 
       <div class="row">
@@ -54,14 +59,14 @@
           <button id="applyRange">範囲適用（次のセットから）</button>
           <button id="restartSet">10問セットを最初から</button>
         </div>
-        <div class="small">※ 10〜99がデフォルト。範囲は次の10問セットから反映。</div>
+        <div class="small">※ 範囲は次の10問セットから反映。履歴はこの端末内に保存されます。</div>
       </div>
     </div>
 
     <!-- 結果画面 -->
     <div id="resultView" class="hidden">
       <div class="q" style="font-size:28px">結果</div>
-      <div class="stat" id="scoreLine">得点：0 / 10（0%）</div>
+      <div class="stat mono" id="scoreLine">得点：0 / 10（0%） / 合計：0.0s / 平均：0.0s</div>
 
       <table>
         <thead>
@@ -71,6 +76,7 @@
             <th>あなたの回答</th>
             <th>正解</th>
             <th>判定</th>
+            <th class="mono">時間(s)</th>
           </tr>
         </thead>
         <tbody id="resultBody"></tbody>
@@ -81,7 +87,25 @@
         <button id="restartSameSet">同じ条件でやり直す</button>
       </div>
 
-      <div class="small">※ 「次の10問へ」で新しい問題を10問出します。</div>
+      <div class="split">
+        <div class="row">
+          <div class="stat" style="font-weight:700">履歴（この端末）</div>
+          <button id="clearHistory">履歴を全削除</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>日時</th>
+              <th>範囲</th>
+              <th>得点</th>
+              <th class="mono">合計(s)</th>
+              <th class="mono">平均(s)</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+        <div class="small">※ 別端末と共有したい場合は、Firebase等のサーバ保存に変えられます。</div>
+      </div>
     </div>
   </div>
 
@@ -101,10 +125,16 @@
   const minEl = $("min");
   const maxEl = $("max");
 
+  const qTimeEl = $("qTime");
+  const setTimeEl = $("setTime");
+
   const scoreLineEl = $("scoreLine");
   const resultBodyEl = $("resultBody");
 
+  const historyBodyEl = $("historyBody");
+
   const SET_SIZE = 10;
+  const HISTORY_KEY = "multiply_practice_history_v1";
 
   let min = 10, max = 99;
   let a = 0, b = 0;
@@ -113,11 +143,24 @@
   let index = 0;      // 0..9
   let correct = 0;
   let total = 0;
-  let records = [];   // {a,b,user,ans,ok}
+  let records = [];   // {a,b,user,ans,ok,sec}
+
+  // タイマー
+  let qStartMs = 0;         // 問題開始
+  let setStartMs = 0;       // セット開始
+  let timerId = null;
 
   function randInt(lo, hi) {
     return Math.floor(Math.random() * (hi - lo + 1)) + lo;
   }
+
+  function nowMs() { return performance.now(); }
+
+  function secSince(ms) {
+    return (nowMs() - ms) / 1000;
+  }
+
+  function fmt1(x) { return (Math.round(x * 10) / 10).toFixed(1); }
 
   function clampRange() {
     let mn = Number(minEl.value);
@@ -142,6 +185,25 @@
     progressEl.textContent = `${Math.min(index + 1, SET_SIZE)} / ${SET_SIZE}`;
   }
 
+  function tick() {
+    // 表示だけ更新
+    qTimeEl.textContent = fmt1(secSince(qStartMs));
+    setTimeEl.textContent = fmt1(secSince(setStartMs));
+  }
+
+  function startTimer() {
+    stopTimer();
+    timerId = setInterval(tick, 100);
+    tick();
+  }
+
+  function stopTimer() {
+    if (timerId != null) {
+      clearInterval(timerId);
+      timerId = null;
+    }
+  }
+
   function newProblem() {
     a = randInt(min, max);
     b = randInt(min, max);
@@ -149,6 +211,9 @@
     answerEl.value = "";
     messageEl.textContent = "";
     answerEl.focus();
+
+    qStartMs = nowMs();
+    startTimer();
   }
 
   function showQuiz() {
@@ -158,12 +223,52 @@
     newProblem();
   }
 
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveHistory(entry) {
+    const arr = loadHistory();
+    arr.unshift(entry);
+    // 多すぎると邪魔なので最大50件
+    const clipped = arr.slice(0, 50);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(clipped));
+  }
+
+  function renderHistory() {
+    const arr = loadHistory();
+    historyBodyEl.innerHTML = "";
+    arr.forEach(h => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${h.date}</td>
+        <td>${h.min}〜${h.max}</td>
+        <td>${h.correct}/${h.total}</td>
+        <td class="mono">${h.totalSec}</td>
+        <td class="mono">${h.avgSec}</td>
+      `;
+      historyBodyEl.appendChild(tr);
+    });
+  }
+
   function showResult() {
+    stopTimer();
     quizView.classList.add("hidden");
     resultView.classList.remove("hidden");
 
+    const totalSec = records.reduce((s, r) => s + r.sec, 0);
+    const avgSec = totalSec / SET_SIZE;
     const rate = Math.round((correct / SET_SIZE) * 100);
-    scoreLineEl.textContent = `得点：${correct} / ${SET_SIZE}（${rate}%）`;
+
+    scoreLineEl.textContent =
+      `得点：${correct} / ${SET_SIZE}（${rate}%） / 合計：${fmt1(totalSec)}s / 平均：${fmt1(avgSec)}s`;
 
     resultBodyEl.innerHTML = "";
     records.forEach((r, i) => {
@@ -174,9 +279,23 @@
         <td>${r.user}</td>
         <td>${r.ans}</td>
         <td>${r.ok ? '○' : '×'}</td>
+        <td class="mono">${fmt1(r.sec)}</td>
       `;
       resultBodyEl.appendChild(tr);
     });
+
+    // 履歴へ保存（日時/範囲/得点/時間）
+    const d = new Date();
+    const dateStr = d.toLocaleString("ja-JP", { hour12: false });
+    saveHistory({
+      date: dateStr,
+      min, max,
+      correct, total: SET_SIZE,
+      totalSec: fmt1(totalSec),
+      avgSec: fmt1(avgSec)
+    });
+
+    renderHistory();
   }
 
   function startNewSet(resetRange = false) {
@@ -186,6 +305,8 @@
     correct = 0;
     total = 0;
     records = [];
+
+    setStartMs = nowMs();
     showQuiz();
   }
 
@@ -203,11 +324,12 @@
 
     const ans = a * b;
     const ok = (v === ans);
+    const sec = secSince(qStartMs);
 
     total++;
     if (ok) correct++;
 
-    records.push({ a, b, user: v, ans, ok });
+    records.push({ a, b, user: v, ans, ok, sec });
 
     if (ok) {
       messageEl.innerHTML = `<span class="ok">○ 正解！</span> <span class="pill">${a}×${b}=${ans}</span>`;
@@ -220,7 +342,6 @@
     index++;
     if (finishIfNeeded()) return;
 
-    // 次の問題へ（少し待つ）
     setTimeout(newProblem, 450);
   }
 
@@ -228,7 +349,6 @@
   $("checkBtn").addEventListener("click", () => submitAnswer(answerEl.value));
 
   $("skipBtn").addEventListener("click", () => {
-    // 「わからない」= 0で回答扱い（自分用ならこれが一番ラク）
     answerEl.value = "0";
     submitAnswer(0);
   });
@@ -238,7 +358,6 @@
   });
 
   $("applyRange").addEventListener("click", () => {
-    // 今セット中は条件変えない：次のセットから反映
     const { mn, mx } = clampRange();
     minEl.value = String(mn);
     maxEl.value = String(mx);
@@ -246,25 +365,27 @@
   });
 
   $("restartSet").addEventListener("click", () => {
-    // 現在の入力範囲を適用して最初から
     startNewSet(true);
   });
 
   $("nextSet").addEventListener("click", () => {
-    // 表示されている範囲を適用して新しい10問
     startNewSet(true);
   });
 
   $("restartSameSet").addEventListener("click", () => {
-    // 範囲はそのまま、10問をやり直し
     startNewSet(false);
+  });
+
+  $("clearHistory").addEventListener("click", () => {
+    localStorage.removeItem(HISTORY_KEY);
+    renderHistory();
   });
 
   // 初期化
   applyRangeToState();
+  renderHistory();
   startNewSet(false);
 })();
 </script>
 </body>
-
 </html>
