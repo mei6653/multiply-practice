@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>2桁かけ算練習（10問）</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px; }
+    .card { max-width: 720px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 16px; }
+    h1 { font-size: 22px; margin: 0 0 12px; }
+    .q { font-size: 36px; font-weight: 700; margin: 14px 0; letter-spacing: 1px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input[type="number"] { font-size: 22px; padding: 10px 12px; width: 220px; border-radius: 12px; border: 1px solid #bbb; }
+    button { font-size: 18px; padding: 10px 14px; border-radius: 12px; border: 1px solid #666; background: #fff; cursor: pointer; }
+    button:active { transform: translateY(1px); }
+    .msg { margin-top: 12px; font-size: 18px; min-height: 28px; }
+    .ok { color: #0a7; font-weight: 700; }
+    .ng { color: #d33; font-weight: 700; }
+    .stat { margin-top: 10px; color: #444; }
+    .small { color: #666; font-size: 14px; margin-top: 12px; }
+    .pill { display: inline-block; padding: 3px 10px; border: 1px solid #ccc; border-radius: 999px; margin-left: 6px; }
+
+    .settings { margin-top: 14px; padding-top: 12px; border-top: 1px solid #eee; }
+
+    .hidden { display: none; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+    th { background: #f6f6f6; }
+    .left { text-align: left; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>2桁のかけ算練習（10問）</h1>
+
+    <!-- 問題画面 -->
+    <div id="quizView">
+      <div class="stat" id="progress">1 / 10</div>
+      <div class="q" id="question">-- × --</div>
+
+      <div class="row">
+        <input id="answer" type="number" inputmode="numeric" placeholder="答え" />
+        <button id="checkBtn">判定（Enter）</button>
+        <button id="skipBtn">わからない（0で回答）</button>
+      </div>
+
+      <div class="msg" id="message"></div>
+      <div class="stat" id="stats">正解 0 / 0（0%）</div>
+
+      <div class="settings">
+        <div class="row">
+          <label>最小 <input id="min" type="number" value="10" style="width:90px"></label>
+          <label>最大 <input id="max" type="number" value="99" style="width:90px"></label>
+          <button id="applyRange">範囲適用（次のセットから）</button>
+          <button id="restartSet">10問セットを最初から</button>
+        </div>
+        <div class="small">※ 10〜99がデフォルト。範囲は次の10問セットから反映。</div>
+      </div>
+    </div>
+
+    <!-- 結果画面 -->
+    <div id="resultView" class="hidden">
+      <div class="q" style="font-size:28px">結果</div>
+      <div class="stat" id="scoreLine">得点：0 / 10（0%）</div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th class="left">問題</th>
+            <th>あなたの回答</th>
+            <th>正解</th>
+            <th>判定</th>
+          </tr>
+        </thead>
+        <tbody id="resultBody"></tbody>
+      </table>
+
+      <div class="row" style="margin-top:12px">
+        <button id="nextSet">次の10問へ</button>
+        <button id="restartSameSet">同じ条件でやり直す</button>
+      </div>
+
+      <div class="small">※ 「次の10問へ」で新しい問題を10問出します。</div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  const quizView = $("quizView");
+  const resultView = $("resultView");
+
+  const questionEl = $("question");
+  const answerEl = $("answer");
+  const messageEl = $("message");
+  const statsEl = $("stats");
+  const progressEl = $("progress");
+
+  const minEl = $("min");
+  const maxEl = $("max");
+
+  const scoreLineEl = $("scoreLine");
+  const resultBodyEl = $("resultBody");
+
+  const SET_SIZE = 10;
+
+  let min = 10, max = 99;
+  let a = 0, b = 0;
+
+  // セット進行
+  let index = 0;      // 0..9
+  let correct = 0;
+  let total = 0;
+  let records = [];   // {a,b,user,ans,ok}
+
+  function randInt(lo, hi) {
+    return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+  }
+
+  function clampRange() {
+    let mn = Number(minEl.value);
+    let mx = Number(maxEl.value);
+    if (!Number.isFinite(mn) || !Number.isFinite(mx)) { mn = 10; mx = 99; }
+    if (mn > mx) [mn, mx] = [mx, mn];
+    mn = Math.max(0, Math.min(999, mn));
+    mx = Math.max(0, Math.min(999, mx));
+    return { mn, mx };
+  }
+
+  function applyRangeToState() {
+    const { mn, mx } = clampRange();
+    min = mn; max = mx;
+    minEl.value = String(min);
+    maxEl.value = String(max);
+  }
+
+  function updateStats() {
+    const rate = total === 0 ? 0 : Math.round((correct / total) * 100);
+    statsEl.textContent = `正解 ${correct} / ${total}（${rate}%）`;
+    progressEl.textContent = `${Math.min(index + 1, SET_SIZE)} / ${SET_SIZE}`;
+  }
+
+  function newProblem() {
+    a = randInt(min, max);
+    b = randInt(min, max);
+    questionEl.textContent = `${a} × ${b}`;
+    answerEl.value = "";
+    messageEl.textContent = "";
+    answerEl.focus();
+  }
+
+  function showQuiz() {
+    resultView.classList.add("hidden");
+    quizView.classList.remove("hidden");
+    updateStats();
+    newProblem();
+  }
+
+  function showResult() {
+    quizView.classList.add("hidden");
+    resultView.classList.remove("hidden");
+
+    const rate = Math.round((correct / SET_SIZE) * 100);
+    scoreLineEl.textContent = `得点：${correct} / ${SET_SIZE}（${rate}%）`;
+
+    resultBodyEl.innerHTML = "";
+    records.forEach((r, i) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${i + 1}</td>
+        <td class="left">${r.a} × ${r.b}</td>
+        <td>${r.user}</td>
+        <td>${r.ans}</td>
+        <td>${r.ok ? '○' : '×'}</td>
+      `;
+      resultBodyEl.appendChild(tr);
+    });
+  }
+
+  function startNewSet(resetRange = false) {
+    if (resetRange) applyRangeToState();
+
+    index = 0;
+    correct = 0;
+    total = 0;
+    records = [];
+    showQuiz();
+  }
+
+  function finishIfNeeded() {
+    if (index >= SET_SIZE) {
+      showResult();
+      return true;
+    }
+    return false;
+  }
+
+  function submitAnswer(value) {
+    const v = Number(value);
+    if (!Number.isFinite(v)) return;
+
+    const ans = a * b;
+    const ok = (v === ans);
+
+    total++;
+    if (ok) correct++;
+
+    records.push({ a, b, user: v, ans, ok });
+
+    if (ok) {
+      messageEl.innerHTML = `<span class="ok">○ 正解！</span> <span class="pill">${a}×${b}=${ans}</span>`;
+    } else {
+      messageEl.innerHTML = `<span class="ng">× ちがう</span> <span class="pill">正解：${ans}</span>`;
+    }
+
+    updateStats();
+
+    index++;
+    if (finishIfNeeded()) return;
+
+    // 次の問題へ（少し待つ）
+    setTimeout(newProblem, 450);
+  }
+
+  // イベント
+  $("checkBtn").addEventListener("click", () => submitAnswer(answerEl.value));
+
+  $("skipBtn").addEventListener("click", () => {
+    // 「わからない」= 0で回答扱い（自分用ならこれが一番ラク）
+    answerEl.value = "0";
+    submitAnswer(0);
+  });
+
+  answerEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitAnswer(answerEl.value);
+  });
+
+  $("applyRange").addEventListener("click", () => {
+    // 今セット中は条件変えない：次のセットから反映
+    const { mn, mx } = clampRange();
+    minEl.value = String(mn);
+    maxEl.value = String(mx);
+    messageEl.textContent = `範囲は次の10問セットから ${mn}〜${mx} にします`;
+  });
+
+  $("restartSet").addEventListener("click", () => {
+    // 現在の入力範囲を適用して最初から
+    startNewSet(true);
+  });
+
+  $("nextSet").addEventListener("click", () => {
+    // 表示されている範囲を適用して新しい10問
+    startNewSet(true);
+  });
+
+  $("restartSameSet").addEventListener("click", () => {
+    // 範囲はそのまま、10問をやり直し
+    startNewSet(false);
+  });
+
+  // 初期化
+  applyRangeToState();
+  startNewSet(false);
+})();
+</script>
+</body>
+</html>
